@@ -1,3 +1,9 @@
+# T1 2024
+
+The following are metrics produced from training on the T1-weighted images using 25 of the total 48 examples available with LOOCV (the '2024 data'). 
+
+**WARNING: THIS WAS TRAINED WITH SOME INCORRECT SEGMENTATIONS. STILL NEED TO RETRAIN!**
+
 Summary Metrics for all models:
                             Model path  Fold ID                                                Input image path  Actual markers  True positives  False negatives  False positives  Misclassified
  T1-2024/T1-20250408-083234-0-best.pth        0 bids-2024/sub-z1318033/ses-20230825/extra_data/t1_corrected.nii               3               0                3                0              0
@@ -39,6 +45,10 @@ False negative percentage: 24.32%
 False positive percentage: 12.16%
 Misclassified percentage: 9.46%
 
+# T1 2024-2025
+**WARNING: THIS WAS TRAINED WITH SOME INCORRECT SEGMENTATIONS. RETRAINING NOW 2025-04-10**
+
+The following are metrics produced from training on the T1-weighted images all 48 examples available with LOOCV (the '2024' + '2025' data).
 
 Summary Metrics for all models:
                                   Model path  Fold ID                                                Input image path  Actual markers  True positives  False negatives  False positives  Misclassified
@@ -104,6 +114,10 @@ False negative percentage: 15.49%
 False positive percentage: 14.08%
 Misclassified percentage: 10.56%
 
+# T1 + QSM 2024 - 2025
+
+The following are metrics produced by training multi-modal models using all available 48 examples with LOOCV. These included T1 and QSM images together for training. 
+
 Summary Metrics for all models:
                                           Model path  Fold ID                                                Input image path  Actual markers  True positives  False negatives  False positives  Misclassified
  T1-QSM-2024-2025/T1-QSM-20250408-151653-0-final.pth        0       bids-2025/sub-z0808273/ses-20241209/anat/t1_corrected.nii               3               3                0                0              0
@@ -165,6 +179,10 @@ True positive percentage: 70.59%
 False negative percentage: 29.41%
 False positive percentage: 19.85%
 Misclassified percentage: 13.24%
+
+# QSM 2024 - 2025
+
+The following are metrics produced by training models using QSM images with all available 48 examples with LOOCV.
 
 Summary Metrics for all models:
                       Model path  Fold ID                                               Input image path  Actual markers  True positives  False negatives  False positives  Misclassified
