@@ -1,207 +1,162 @@
-import argparse
+#!/usr/bin/env python
 import os
-import torch
-import nibabel as nib
-import torchio as tio
+import argparse
 import glob
+import pandas as pd
+import nibabel as nib
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
+import torchio as tio
 from sklearn.model_selection import KFold
 
-import fastMONAI.vision_all
-from fastMONAI.vision_all import (
-    MedDataBlock, ImageBlock, MedImage,
-    ColReader, PadOrCrop, ZNormalization,
-    DataLoaders, IndexSplitter
-)
+# --- 3D UNet (matching training) ---
+class UNet3D(nn.Module):
+    def __init__(self, in_channels, out_channels, channels=(16,32,64,128,256)):
+        super().__init__()
+        self.encoders = nn.ModuleList()
+        self.pool = nn.MaxPool3d(2)
+        prev_ch = in_channels
+        for ch in channels:
+            self.encoders.append(self._conv_block(prev_ch, ch))
+            prev_ch = ch
+        self.bottleneck = self._conv_block(prev_ch, prev_ch*2)
+        rev = list(reversed(channels))
+        self.upconvs = nn.ModuleList()
+        self.decoders = nn.ModuleList()
+        cur_ch = prev_ch*2
+        for ch in rev:
+            self.upconvs.append(nn.ConvTranspose3d(cur_ch, ch, kernel_size=2, stride=2))
+            self.decoders.append(self._conv_block(ch*2, ch))
+            cur_ch = ch
+        self.final_conv = nn.Conv3d(cur_ch, out_channels, kernel_size=1)
 
-from monai.networks.nets import UNet
-from monai.losses import DiceCELoss
-import scipy.ndimage as ndimage
-
-def pad_or_crop_tensor(input_tensor, target_size, interpolation='trilinear'):
-    # Calculate padding or cropping values for depth, height and width
-    diff_depth = target_size[0] - input_tensor.shape[0]
-    diff_height = target_size[1] - input_tensor.shape[1]
-    diff_width = target_size[2] - input_tensor.shape[2]
-
-    # Handle depth
-    if diff_depth > 0:
-        pad_depth = diff_depth
-        crop_depth = slice(None)
-    else:
-        pad_depth = 0
-        crop_depth = slice(-diff_depth // 2, diff_depth // 2 + input_tensor.shape[0])
-
-    # Handle height
-    if diff_height > 0:
-        pad_height = diff_height
-        crop_height = slice(None)
-    else:
-        pad_height = 0
-        crop_height = slice(-diff_height // 2, diff_height // 2 + input_tensor.shape[1])
-
-    # Handle width
-    if diff_width > 0:
-        pad_width = diff_width
-        crop_width = slice(None)
-    else:
-        pad_width = 0
-        crop_width = slice(-diff_width // 2, diff_width // 2 + input_tensor.shape[2])
-
-    # Apply padding if needed
-    if pad_depth > 0 or pad_height > 0 or pad_width > 0:
-        input_tensor = torch.nn.functional.pad(
-            input_tensor, 
-            (pad_width//2, pad_width//2, pad_height//2, pad_height//2, pad_depth//2, pad_depth//2)
+    def _conv_block(self, in_ch, out_ch):
+        return nn.Sequential(
+            nn.Conv3d(in_ch, out_ch, 3, padding=1),
+            nn.BatchNorm3d(out_ch),
+            nn.ReLU(inplace=True),
+            nn.Conv3d(out_ch, out_ch, 3, padding=1),
+            nn.BatchNorm3d(out_ch),
+            nn.ReLU(inplace=True),
         )
 
-    # Crop tensor if needed
-    input_tensor = input_tensor[crop_depth, crop_height, crop_width]
+    def forward(self, x):
+        feats = []
+        for enc in self.encoders:
+            x = enc(x)
+            feats.append(x)
+            x = self.pool(x)
+        x = self.bottleneck(x)
+        for up, dec, enc_feat in zip(self.upconvs, self.decoders, reversed(feats)):
+            x = up(x)
+            if x.shape != enc_feat.shape:
+                dz = enc_feat.size(2) - x.size(2)
+                dy = enc_feat.size(3) - x.size(3)
+                dx = enc_feat.size(4) - x.size(4)
+                x = F.pad(x, [dx//2, dx-dx//2, dy//2, dy-dy//2, dz//2, dz-dz//2])
+            x = torch.cat([enc_feat, x], dim=1)
+            x = dec(x)
+        return self.final_conv(x)
 
-    return input_tensor
+# --- Helper to reconstruct the bids dataframe and fetch default input ---
+def get_default_input(model_path):
+    base = os.path.basename(model_path)
+    parts = base.split('-')
+    try:
+        fold_id = int(parts[-2])
+    except:
+        raise ValueError(f"Cannot parse fold id from '{base}'")
+    bids_dirs = ["bids-2025-2"]
+    records = []
+    for bids_dir in bids_dirs:
+        for subj in sorted(glob.glob(os.path.join(bids_dir, "z*"))):
+            sub = os.path.basename(subj)
+            roi_dir = os.path.join(subj, "roi_niftis_mri_space")
+            if not os.path.isdir(roi_dir):
+                continue
+            nii_list = glob.glob(os.path.join(subj, "*.nii*")) + glob.glob(os.path.join(roi_dir, "*.nii*"))
+            rec = {"subject_id": sub}
+            for p in nii_list:
+                fn = os.path.basename(p)
+                if 'MRI_homogeneity-corrected' in fn:
+                    rec['MRI_homogeneity-corrected'] = p
+            if 'MRI_homogeneity-corrected' in rec:
+                records.append(rec)
+    df = pd.DataFrame(records)
+    df = df[df['MRI_homogeneity-corrected'].notna()].reset_index(drop=True)
+    kf = KFold(n_splits=len(df), random_state=42, shuffle=True)
+    splits = list(kf.split(df))
+    if fold_id < 0 or fold_id >= len(splits):
+        raise IndexError(f"Fold id {fold_id} out of range")
+    _, valid_idx = splits[fold_id]
+    vid = valid_idx[0]
+    return df.loc[vid, 'MRI_homogeneity-corrected']
 
-def resample_to_1mm(input_nifti: str, output_nifti: str) -> str:
-    """
-    Load a NIfTI file, resample it to 1 mm isotropic, and save as <original>_resampled.nii.
-    """
-    img = tio.ScalarImage(input_nifti)
-    resample_transform = tio.Resample((1, 1, 1))
-    resampled = resample_transform(img)
-    data_4d = resampled.data
-    affine = resampled.affine
-    data_3d = data_4d.squeeze(0).numpy()
-    out_nii = nib.Nifti1Image(data_3d, affine)
-    nib.save(out_nii, output_nifti)
-    print(f"Saved resampled image to {output_nifti}")
-    return output_nifti
+# --- Crop/pad utility matching training ---
+def pad_or_crop_numpy(vol, target):
+    # Crop
+    slices = []
+    for i in range(3):
+        diff = vol.shape[i] - target[i]
+        if diff > 0:
+            start = diff // 2
+            slices.append(slice(start, start + target[i]))
+        else:
+            slices.append(slice(0, vol.shape[i]))
+    vol_c = vol[slices[0], slices[1], slices[2]]
+    # Pad
+    pad_width = []
+    for i in range(3):
+        diff = target[i] - vol_c.shape[i]
+        if diff > 0:
+            before = diff // 2
+            after = diff - before
+            pad_width.append((before, after))
+        else:
+            pad_width.append((0, 0))
+    return np.pad(vol_c, pad_width, mode='constant', constant_values=0)
 
+# --- Inference ---
 def main():
-    parser = argparse.ArgumentParser(description="Minified inference to save raw label maps + final segmentation.")
-    parser.add_argument("--model", help="Path to the trained .pth model (optional)")
-    parser.add_argument("--model_type", default='T1')
-    parser.add_argument("--input", required=True, help="Path to the input NIfTI file")
-    parser.add_argument("--output", required=True, help="Directory to save outputs")
-    parser.add_argument("--shape", nargs=3, type=int, default=[80, 80, 80],
-                        help="PadOrCrop shape, e.g. --shape 224 196 50")
-    parser.add_argument("--clean", action="store_true",
-                        help="Run clean_up_segmentation before saving final seg")
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--model', required=True, help="Path to .pth model file")
+    parser.add_argument('--input', help="Input NIfTI; defaults to validation case if omitted.")
+    parser.add_argument('--output', required=True)
     args = parser.parse_args()
 
-    # If no model is provided and the input path contains a 'bids' folder,
-    # extract the subject name and determine the fold index.
-    if not args.model:
-        input_parts = os.path.abspath(args.input).split(os.sep)
-        if "bids" in input_parts:
-            bids_index = input_parts.index("bids")
-            try:
-                subject_name = input_parts[bids_index + 1]
-            except IndexError:
-                print("Could not find subject folder after 'bids'.")
-                exit(1)
-        else:
-            print("--model parameter not provided and no 'bids' folder found in input path.")
-            exit(1)
+    if not args.input:
+        args.input = get_default_input(args.model)
+        print(f"No input specified; using validation case: {args.input}")
 
-        bids_dir = os.path.sep + os.path.join(*input_parts[:bids_index + 1])
-        subject_dirs = [d for d in os.listdir(bids_dir) if d.startswith("sub-") and os.path.isdir(os.path.join(bids_dir, d))]
-        if subject_name not in subject_dirs:
-            print(f"Subject {subject_name} not found in bids directory.")
-            exit(1)
+    os.makedirs(args.output, exist_ok=True)
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-        subjects = sorted(subject_dirs)
-        n_splits = min(25, len(subjects))
-        kf = KFold(n_splits=n_splits, random_state=42, shuffle=True)
-        subjects_array = np.array(subjects)
-        fold_index = None
-        for i, (train_idx, val_idx) in enumerate(kf.split(subjects_array)):
-            if subject_name in subjects_array[val_idx]:
-                fold_index = i
-                break
-        if fold_index is None:
-            print(f"Subject {subject_name} not assigned to any fold.")
-            exit(1)
-        pattern = os.path.abspath(f"models/{args.model_type}-2024*-*-{fold_index}-best*.pth")
-        model_files = glob.glob(pattern)
-        if not model_files:
-            print(f"No model file found matching pattern: {pattern}")
-            exit(1)
-        args.model = model_files[0]
-        print(f"Auto-selected model: {args.model}")
+    net = UNet3D(in_channels=1, out_channels=3).to(device)
+    state = torch.load(args.model, map_location=device)
+    net.load_state_dict(state)
+    net.eval()
 
-    print("Resampling input...")
-    args.input = resample_to_1mm(args.input, os.path.join(args.output, 'resampled.nii'))
+    orig = nib.load(args.input)
+    affine, header = orig.affine, orig.header
 
-    # 1) Load the model architecture and weights.
-    model = UNet(
-        spatial_dims=3,
-        in_channels=1,
-        out_channels=3,
-        channels=(16, 32, 64, 128, 256),
-        strides=(2, 2, 2, 2),
-        num_res_units=2
-    )
-    learn = fastMONAI.vision_all.Learner(
-        dls=None,
-        model=model,
-        loss_func=DiceCELoss(
-            to_onehot_y=True,
-            include_background=True,
-            softmax=True
-        )
-    )
-    learn.load(args.model.replace(".pth", ""))
-    if torch.cuda.is_available():
-        learn.model.cuda()
-
-    # 2) Build a data block to replicate the inference transforms.
-    eval_augmentations = [
-        PadOrCrop(args.shape),
-        ZNormalization(),
-    ]
-    df = fastMONAI.vision_all.pd.DataFrame({"img_files": [args.input]})
-    dblock = fastMONAI.vision_all.MedDataBlock(
-        blocks=(ImageBlock(cls=MedImage),),
-        splitter=IndexSplitter([]),
-        get_x=ColReader("img_files"),
-        item_tfms=eval_augmentations
-    )
-    dls = dblock.dataloaders(df, bs=1)
-
-    # 3) Run inference on the single item.
-    (x,) = next(iter(dls.train))
-    if torch.cuda.is_available():
-        x = x.cuda()
+    img = tio.ScalarImage(args.input)
+    orig_shape = img.data.numpy()[0].shape
+    sample = tio.ZNormalization()(tio.CropOrPad((100,100,64))(img))
+    x = sample.data.unsqueeze(0).to(device)
 
     with torch.no_grad():
-        pred = learn.model(x)  # shape: (1, 3, D, H, W)
-    pred_data = pred.cpu()[0]  # shape: (3, D, H, W)
+        out = net(x)
+        seg = out.argmax(dim=1).cpu().numpy()[0]
 
-    # 4) Extract each channel and final segmentation.
-    pred_empty = pred_data[0]
-    pred_seed  = pred_data[1]
-    pred_calc  = pred_data[2]
-    pred_seg = torch.argmax(pred_data, dim=0)
+    full = pad_or_crop_numpy(seg, orig_shape)
+    seeds = (full == 1).astype(np.uint8)
+    prot  = (full == 2).astype(np.uint8)
 
-    # 5) Save each volume using the original affine and header.
-    os.makedirs(args.output, exist_ok=True)
-    ref_nii = nib.load(args.input)
-    def save_vol(tensor_3d, out_name, interpolation='trilinear'):
-        tensor_3d = pad_or_crop_tensor(tensor_3d, ref_nii.shape, interpolation=interpolation)
-        out_path = os.path.join(args.output, out_name)
-        out_img = nib.Nifti1Image(tensor_3d.numpy(), ref_nii.affine, ref_nii.header)
-        nib.save(out_img, out_path)
-        print(f"Saved: {out_path}")
+    nib.save(nib.Nifti1Image(full.astype(np.uint8), affine, header), os.path.join(args.output, 'pred_full.nii.gz'))
+    nib.save(nib.Nifti1Image(seeds, affine, header), os.path.join(args.output, 'pred_seeds.nii.gz'))
+    nib.save(nib.Nifti1Image(prot, affine, header), os.path.join(args.output, 'pred_prostate.nii.gz'))
 
-    save_vol(pred_empty, "pred_empty.nii")
-    save_vol(pred_seed,  "pred_seed.nii")
-    save_vol(pred_calc,  "pred_calc.nii")
-    save_vol(pred_seg,   "pred_seg.nii", interpolation='nearest')
-
-if __name__ == "__main__":
+if __name__=='__main__':
     main()
-
-# GOOD MODELS SO FAR ON 
-# bids-2025/sub-z0394025/ses-20240930/anat/sub-z0394025_ses-20240930_acq-t1tragradientseed_T1w.nii
-# /home/ashley/mount/T1-20240405-062011-3-final/pred_seg.nii
-# /home/ashley/mount/T1-20240405-071429-7-final/pred_seg.nii
-# /home/ashley/mount/T1-20240405-080940-13-final/pred_seg.nii

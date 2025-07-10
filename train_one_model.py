@@ -9,7 +9,6 @@ print("Importing libraries...")
 
 import glob
 import os
-import json
 import time
 import datetime
 import sys
@@ -40,10 +39,10 @@ random_state = 42
 timestamp = datetime.datetime.fromtimestamp(time.time()).strftime('%Y%m%d-%H%M%S')
 
 batch_size = 6
-training_epochs = 700
+training_epochs = 1300
 lr = 0.003
 num_classes = 3
-ce_loss_weights = torch.ones(num_classes) # e.g. [1, 1]
+ce_loss_weights = torch.tensor([1, 5, 1], dtype=torch.float32)
 
 if torch.cuda.is_available():
     device = torch.device("cuda:0")
@@ -53,29 +52,75 @@ else:
     print("GPU is NOT available. Using CPU.")
 
 # --- Data preparation: Build dataframe from bids directories ---
-bids_dirs = ["bids-2024", "bids-2025"]
+bids_dirs = ["bids-2025-2"]
+
+# Setup dictionary to hold paths for each subject
+# This will be used to create a pandas dataframe later
+# Initialize an empty list to hold the paths
 paths_list = []
 
 for bids_dir in bids_dirs:
-    subject_dirs = sorted(glob.glob(os.path.join(bids_dir, "sub-*")))
-    subject_dirs = [s for s in subject_dirs if 'sub-z0449294' not in s]
+    subject_dirs = sorted(glob.glob(os.path.join(bids_dir, "z*")))
+
     for subject_dir in subject_dirs:
+        subject_id = os.path.basename(subject_dir)
+
+        # Check if roi_niftis_mri_space/ directory exists
+        roi_dir = os.path.join(subject_dir, "roi_niftis_mri_space")
+        if not os.path.exists(roi_dir):
+            print(f"Skipping {subject_id} as roi_niftis_mri_space directory does not exist.")
+            continue
+
+        # Get all nifti files
+        nii_paths = glob.glob(os.path.join(subject_dir, "*.nii*"))
+
+        # Get all nifti files in the roi_niftis_mri_space directory
+        nii_paths += glob.glob(os.path.join(roi_dir, "*.nii*"))
+
         paths_dict = {}
-        nii_paths = glob.glob(os.path.join(subject_dir, "ses-*", "*", "*.nii"))
+
         for nii_path in nii_paths:
-            # Extract modality name from the file name
-            modality_name = os.path.basename(nii_path).split('.')[0]
-            if modality_name.startswith('sub-'):
-                continue
-            paths_dict[modality_name] = nii_path
+            paths_dict['subject_id'] = subject_id
+            file_name = os.path.basename(nii_path).split('.')[0]
+
+            if 'GS1' in file_name:
+                segmentation_name = "GS1"
+            elif 'GS2' in file_name:
+                segmentation_name = "GS2"
+            elif 'GS3' in file_name:
+                segmentation_name = "GS3"
+            else:
+                segmentation_name = "_".join(file_name.split('_')[1:])
+
+            if segmentation_name == "roi_CTV_High_MR":
+                segmentation_name = "Prostate"
+            
+            paths_dict[segmentation_name] = nii_path
+
+        # Append the dictionary to the list
         paths_list.append(paths_dict)
 
+# Convert the list of dictionaries to a pandas DataFrame
 df = pd.DataFrame(paths_list)
+# Replace NaN values with None
 df = df.where(pd.notnull(df), None)
 
+# For rows with no Prostate segmentation, if there is a roi_CTV_Low_MR segmentation, use it as Prostate
+for index, row in df.iterrows():
+    if row.get('Prostate') is None and row.get('roi_CTV_Low_MR') is not None:
+        df.at[index, 'Prostate'] = row['roi_CTV_Low_MR']
+
+for index, row in df.iterrows():
+    if row.get('Prostate') is None and row.get('roi_CTVp_MR') is not None:
+        df.at[index, 'Prostate'] = row['roi_CTVp_MR']
+
+# Remove all columns except
+columns_to_keep = ['subject_id', 'MRI', 'MRI_homogeneity-corrected', 'CT', 'seeds', 'Prostate']
+df = df[columns_to_keep]
+
 # Keep only rows that have both the input and segmentation files.
-infile_cols = ['t1_corrected']
-seg_col = 't1_corrected_segmentation_clean'
+infile_cols = ['MRI_homogeneity-corrected']
+seg_col = 'seeds'
 
 # Remove rows with missing values in the required columns
 for col in infile_cols + [seg_col]:
@@ -145,7 +190,7 @@ class MergeInputChannels(tio.Transform):
 # --- Build training transforms ---
 if "T1" in model_name:
     training_transforms = tio.Compose([
-        RandomIntensityShift(gamma_range=(0.8, 1.2), p=0.75, apply_to_keys=['t1_corrected']),
+        RandomIntensityShift(gamma_range=(0.8, 1.2), p=0.75, apply_to_keys=['MRI']),
         tio.CropOrPad((100, 100, 64)),
         tio.RandomFlip(axes=(0, 1)),
         tio.RandomAffine(degrees=(90, 90, 90)),
@@ -191,8 +236,6 @@ class TorchIODatasetWrapper(torch.utils.data.Dataset):
             raise KeyError("Missing 'mask' key in subject")
         mask = subject['mask'].data.squeeze(0)
         mask = mask.long()
-        # remap calcification (2) → background (0)
-        # mask = torch.where(mask == 2, torch.zeros_like(mask), mask)
         return image, mask
 
 train_dataset = TorchIODatasetWrapper(train_subjects_dataset)
@@ -261,56 +304,48 @@ def dice_loss(pred, target, eps=1e-5):
     dice = (2 * intersection + eps) / (sums + eps)
     return 1 - dice.mean()
 def combined_loss(pred, target):
-    return ce_loss_fn(pred, target) + dice_loss(pred, target)
+    return ce_loss_fn(pred, target) + 0.5 * dice_loss(pred, target)
 
-def process_volume(pred_vol, targ_vol, calc_vol, structure):
-    pred_labels, pred_nlabels = scipy.ndimage.label(pred_vol, structure=structure)
+def process_volume(pred_vol, targ_vol, structure):
+    _, pred_nlabels = scipy.ndimage.label(pred_vol, structure=structure)
     _, targ_nlabels = scipy.ndimage.label(targ_vol, structure=structure)
-    if pred_nlabels > 3:
-        sizes = np.bincount(pred_labels.ravel())[1:]
-        largest_labels = np.argsort(sizes)[-3:] + 1
-        pred_vol = np.isin(pred_labels, largest_labels).astype(pred_vol.dtype)
-        pred_labels, pred_nlabels = scipy.ndimage.label(pred_vol, structure=structure)
+
     overlap = np.logical_and(pred_vol == targ_vol, pred_vol == 1)
     _, n_overlaps = scipy.ndimage.label(overlap, structure=structure)
-    labeled_pred, num_pred_objects = scipy.ndimage.label(pred_vol == 1, structure=structure)
-    misclassified = 0
-    for label in range(1, num_pred_objects + 1):
-        component = (labeled_pred == label)
-        if np.any(component & calc_vol) and not np.any(component & targ_vol):
-            misclassified += 1
-    return pred_nlabels, targ_nlabels, n_overlaps, misclassified
+
+    return pred_nlabels, targ_nlabels, n_overlaps
 
 def compute_metrics(pred, targ):
     structure = np.ones((3, 3, 3), dtype=bool)
     total_pred_marker_count = 0
     total_targ_marker_count = 0
     total_overlap_count = 0
-    total_misclassified = 0
+
     pred_marker = (pred == 1).astype(np.int32)
     targ_marker = (targ == 1).astype(np.int32)
-    targ_calc = (targ == 2).astype(np.int32)
+
+    # Optional dilation to account for small misalignments
     pred_marker = scipy.ndimage.binary_dilation(pred_marker)
     targ_marker = scipy.ndimage.binary_dilation(targ_marker)
-    targ_calc = scipy.ndimage.binary_dilation(targ_calc)
+
     for i in range(pred_marker.shape[0]):
         p_vol = pred_marker[i]
         t_vol = targ_marker[i]
-        c_vol = targ_calc[i]
-        p_n, t_n, n_overlap, misclassified = process_volume(p_vol, t_vol, c_vol, structure)
+        p_n, t_n, n_overlap = process_volume(p_vol, t_vol, structure)
         total_pred_marker_count += p_n
         total_targ_marker_count += t_n
         total_overlap_count += n_overlap
-        total_misclassified += misclassified
+
     false_negative = total_targ_marker_count - total_overlap_count
     false_positive = total_pred_marker_count - total_overlap_count
+
     return {
          "actual_markers": total_targ_marker_count,
          "true_positive": total_overlap_count,
          "false_negative": false_negative,
-         "false_positive": false_positive,
-         "misclassified": total_misclassified
+         "false_positive": false_positive
     }
+
 
 train_loss_list = []
 valid_loss_list = []
@@ -320,7 +355,7 @@ scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=training_epoch
 
 best_valid_loss = float('inf')
 epochs_no_improve = 0
-patience = 200
+patience = 500
 
 #%%
 start_time = time.time()
@@ -360,10 +395,9 @@ for epoch in range(training_epochs):
     valid_loss_list.append(valid_loss)
     
     print(f"Epoch {epoch+1}/{training_epochs}, Train Loss: {train_loss:.4f}, Valid Loss: {valid_loss:.4f}")
-    print(f"Actual markers: {metrics['actual_markers']}, True positive gold markers: {metrics['true_positive']}, "
-          f"False negative gold markers: {metrics['false_negative']}, False positive gold markers: {metrics['false_positive']}, "
-          f"Misclassified calcification as gold markers: {metrics['misclassified']}")
-    
+    print(f"Actual seed markers: {metrics['actual_markers']}, True positive: {metrics['true_positive']}, "
+        f"False negative: {metrics['false_negative']}, False positive: {metrics['false_positive']}")
+
     plt.figure()
     plt.plot(range(1, epoch+2), train_loss_list, label="Train Loss")
     plt.plot(range(1, epoch+2), valid_loss_list, label="Validation Loss")
@@ -390,3 +424,5 @@ end_time = time.time()
 duration_mins = (end_time - start_time) / 60
 print(f"Finished training after {round(duration_mins, 2)} mins")
 torch.save(model.state_dict(), f"{model_name}-{timestamp}-{fold_id}-final.pth")
+
+# %%
