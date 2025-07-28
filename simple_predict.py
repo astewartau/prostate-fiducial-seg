@@ -94,6 +94,16 @@ def get_default_input(model_path):
     vid = valid_idx[0]
     return df.loc[vid, 'MRI_homogeneity-corrected']
 
+# --- Function to find nearest compatible dimensions for UNet ---
+def find_nearest_compatible_size(input_shape, min_factor=32):
+    """Find nearest larger size divisible by min_factor (pad-only approach)"""
+    compatible_shape = []
+    for dim in input_shape:
+        # Round up to nearest multiple of min_factor
+        compatible_dim = ((dim + min_factor - 1) // min_factor) * min_factor
+        compatible_shape.append(compatible_dim)
+    return tuple(compatible_shape)
+
 # --- Crop/pad utility matching training ---
 def pad_or_crop_numpy(vol, target):
     # Crop
@@ -143,7 +153,8 @@ def main():
 
     img = tio.ScalarImage(args.input)
     orig_shape = img.data.numpy()[0].shape
-    sample = tio.ZNormalization()(tio.CropOrPad((100,100,64))(img))
+    compatible_shape = find_nearest_compatible_size(orig_shape)
+    sample = tio.ZNormalization()(tio.CropOrPad(compatible_shape)(img))
     x = sample.data.unsqueeze(0).to(device)
 
     with torch.no_grad():
