@@ -3,14 +3,26 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:a100:1
 #SBATCH --qos=gpu
 #SBATCH --mem=100G
-#SBATCH --time=04:00:00
+#SBATCH --time=07:00:00
 #SBATCH --account=a_barth
 #SBATCH --export=PATH,TERM,HOME,LANG
 #SBATCH --output=res_%j.out
 #SBATCH --error=res_%j.err
+
+echo "Starting job on $(hostname) at $(date)"
+
+# Test if the GPU is available
+echo "Checking GPU availability"
+echo `nvidia-smi`
+
+# If no GPU is available, exit with an error
+if ! nvidia-smi | grep -q "NVIDIA-SMI"; then
+    echo "No GPU available, exiting."
+    exit 1
+fi
 
 # Set the location of Miniconda
 export CONDA_HOME=$HOME/miniconda3
