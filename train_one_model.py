@@ -188,10 +188,35 @@ class MergeInputChannels(tio.Transform):
         return subject
 
 # --- Build training transforms ---
+class PadToCompatibleSize(tio.Transform):
+    def __init__(self, min_factor=32):
+        super().__init__()
+        self.min_factor = min_factor
+
+    def apply_transform(self, subject):
+        for key in subject.keys():
+            if isinstance(subject[key], (tio.ScalarImage, tio.LabelMap)):
+                vol = subject[key].data
+                target_shape = []
+                for dim in vol.shape:
+                    compatible_dim = ((dim + self.min_factor - 1) // self.min_factor) * self.min_factor
+                    target_shape.append(compatible_dim)
+                target_shape = tuple(target_shape)
+                if vol.shape != target_shape:
+                    padded_vol = F.pad(vol, [0, target_shape[2] - vol.shape[2],
+                                             0, target_shape[1] - vol.shape[1],
+                                             0, target_shape[0] - vol.shape[0]])
+                    # Preserve the original type (ScalarImage vs LabelMap)
+                    if isinstance(subject[key], tio.ScalarImage):
+                        subject[key] = tio.ScalarImage(tensor=padded_vol, affine=subject[key].affine)
+                    else:  # LabelMap
+                        subject[key] = tio.LabelMap(tensor=padded_vol, affine=subject[key].affine)
+        return subject
+
 if "T1" in model_name:
     training_transforms = tio.Compose([
-        RandomIntensityShift(gamma_range=(0.8, 1.2), p=0.75, apply_to_keys=['MRI']),
-        tio.CropOrPad((100, 100, 64)),
+        RandomIntensityShift(gamma_range=(0.8, 1.2), p=0.75, apply_to_keys=['MRI_homogeneity-corrected']),
+        PadToCompatibleSize(min_factor=32),
         tio.RandomFlip(axes=(0, 1)),
         tio.RandomAffine(degrees=(90, 90, 90)),
         tio.ZNormalization(),
@@ -199,7 +224,7 @@ if "T1" in model_name:
     ])
 else:
     training_transforms = tio.Compose([
-        tio.CropOrPad((100, 100, 64)),
+        PadToCompatibleSize(min_factor=32),
         tio.RandomFlip(axes=(0, 1)),
         tio.RandomAffine(degrees=(90, 90, 90)),
         tio.ZNormalization(),

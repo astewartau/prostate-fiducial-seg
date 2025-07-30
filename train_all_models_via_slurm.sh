@@ -1,8 +1,7 @@
 #!/bin/bash
 
-#for MODEL_NAME in FMAP QSM-FMAP QSM SWI T1 R2s GRE QSM-T1-R2s QSM-T1 QSM-SWI; do
 for MODEL_NAME in T1; do
-    for FOLD_ID in {57..59}; do
+    for FOLD_ID in {0..1}; do # 59
         echo $MODEL_NAME-$FOLD_ID
         sbatch --job-name="${MODEL_NAME}-${FOLD_ID}" --export=ALL,MODEL_NAME=$MODEL_NAME,FOLD_ID=$FOLD_ID train_one_model.slurm
     done

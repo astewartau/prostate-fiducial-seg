@@ -4,6 +4,7 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:a100:1
+#SBATCH --constraint=cuda80gb
 #SBATCH --qos=gpu
 #SBATCH --mem=100G
 #SBATCH --time=07:00:00
@@ -49,6 +50,9 @@ echo "Python version is $(python --version)"
 # Test the Python installation
 echo "Testing Python"
 python -c "import sys; print(sys.executable, sys.version, flush=True)"
+
+# Check version of PyTorch and CUDA
+python -c "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}'); print(f'CUDA version: {torch.version.cuda}')"
 
 # Print a message to confirm the environment variables
 echo "Starting train_one_model.py with MODEL_NAME=${MODEL_NAME} and FOLD_ID=${FOLD_ID}"
