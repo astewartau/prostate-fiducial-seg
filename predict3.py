@@ -87,6 +87,15 @@ class MergeInputChannels(tio.Transform):
         )
         return subject
 
+def find_nearest_compatible_size(input_shape, min_factor=32):
+    """Find nearest larger size divisible by min_factor (pad-only approach)"""
+    compatible_shape = []
+    for dim in input_shape:
+        # Round up to nearest multiple of min_factor
+        compatible_dim = ((dim + min_factor - 1) // min_factor) * min_factor
+        compatible_shape.append(compatible_dim)
+    return tuple(compatible_shape)
+
 def get_crop_pad_params(orig_shape, proc_shape, target_shape=(100,100,64)):
     crop_params, pad_params = [None]*3, [None]*3
     for ax in range(3):
@@ -230,20 +239,24 @@ def main():
     print(f"Using device: {device}")
     print()
 
-    # --- 1) build the same TorchIO pipeline ---
-    infile_cols = ['t1_corrected']
-    transforms = tio.Compose([
-        tio.CropOrPad((100,100,64)),
-        tio.ZNormalization(),
-        MergeInputChannels(infile_cols),
-    ])
-
-    # --- 2) load input & record original shape/header ---
+    # --- 1) load input & record original shape/header ---
     img = nib.load(args.input)
     orig_np = img.get_fdata().astype(np.float32)
     orig_shape = orig_np.shape
     hdr = img.header
     print(f"Original shape: {orig_shape}")
+
+    # Calculate dynamic compatible size (rounds to nearest multiple of 32)
+    compatible_shape = find_nearest_compatible_size(orig_shape, min_factor=32)
+    print(f"Compatible shape (padded to multiples of 32): {compatible_shape}")
+
+    # --- 2) build the TorchIO pipeline with dynamic sizing ---
+    infile_cols = ['t1_corrected']
+    transforms = tio.Compose([
+        tio.CropOrPad(compatible_shape),
+        tio.ZNormalization(),
+        MergeInputChannels(infile_cols),
+    ])
 
     # --- 3) wrap in a Subject and preprocess ---
     subj = tio.Subject(**{infile_cols[0]: tio.ScalarImage(args.input)})
