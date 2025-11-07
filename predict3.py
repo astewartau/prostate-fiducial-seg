@@ -265,7 +265,7 @@ def main():
     print(f"Processed shape: {proc_np.shape}")
 
     # figure out crop/pad params
-    crop_params, pad_params = get_crop_pad_params(orig_shape, proc_np.shape)
+    crop_params, pad_params = get_crop_pad_params(orig_shape, proc_np.shape, compatible_shape)
 
     # --- 4) Run inference with all models and collect probability maps ---
     print(f"\nRunning inference with {len(model_paths)} models...")
