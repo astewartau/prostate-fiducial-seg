@@ -7,9 +7,8 @@
 #SBATCH --constraint=cuda80gb
 #SBATCH --qos=gpu
 #SBATCH --mem=100G
-#SBATCH --time=07:00:00
+#SBATCH --time=15:45:00
 #SBATCH --account=a_barth
-#SBATCH --export=PATH,TERM,HOME,LANG
 #SBATCH --output=res_%j.out
 #SBATCH --error=res_%j.err
 

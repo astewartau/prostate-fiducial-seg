@@ -72,10 +72,12 @@ for bids_dir in bids_dirs:
             continue
 
         # Get all nifti files
-        nii_paths = glob.glob(os.path.join(subject_dir, "*.nii*"))
+        nii_paths = glob.glob(os.path.join(subject_dir, "*.nii")) + \
+                    glob.glob(os.path.join(subject_dir, "*.nii.gz"))
 
         # Get all nifti files in the roi_niftis_mri_space directory
-        nii_paths += glob.glob(os.path.join(roi_dir, "*.nii*"))
+        nii_paths += glob.glob(os.path.join(roi_dir, "*.nii")) + \
+                     glob.glob(os.path.join(roi_dir, "*.nii.gz"))
 
         paths_dict = {}
 
@@ -243,6 +245,24 @@ for _, row in df.iterrows():
 
 subjects_train = [subjects[i] for i in train_index]
 subjects_valid = [subjects[i] for i in valid_index]
+
+# Extract validation example metadata
+validation_row = df.iloc[valid_index[0]]
+validation_metadata = {
+    'subject_id': validation_row['subject_id'],
+    'fold_id': fold_id,
+    'validation_index': int(valid_index[0]),
+    'input_files': {},
+    'segmentation_file': os.path.abspath(validation_row[seg_col])
+}
+for col in infile_cols:
+    validation_metadata['input_files'][col] = os.path.abspath(validation_row[col])
+
+print(f"\nValidation subject: {validation_metadata['subject_id']}")
+print(f"Validation input file(s):")
+for col, path in validation_metadata['input_files'].items():
+    print(f"  {col}: {path}")
+print(f"Validation segmentation file: {validation_metadata['segmentation_file']}\n")
 
 train_subjects_dataset = tio.SubjectsDataset(subjects_train, transform=training_transforms)
 valid_subjects_dataset = tio.SubjectsDataset(subjects_valid, transform=training_transforms)
@@ -436,7 +456,15 @@ for epoch in range(training_epochs):
     
     if valid_loss < best_valid_loss - 0.01:
         best_valid_loss = valid_loss
-        torch.save(model.state_dict(), f"{model_name}-{timestamp}-{fold_id}-best.pth")
+        checkpoint = {
+            'model_state_dict': model.state_dict(),
+            'validation_metadata': validation_metadata,
+            'epoch': epoch + 1,
+            'best_valid_loss': valid_loss,
+            'model_name': model_name,
+            'timestamp': timestamp
+        }
+        torch.save(checkpoint, f"{model_name}-{timestamp}-{fold_id}-best.pth")
         epochs_no_improve = 0
     else:
         epochs_no_improve += 1
@@ -448,6 +476,14 @@ for epoch in range(training_epochs):
 end_time = time.time()
 duration_mins = (end_time - start_time) / 60
 print(f"Finished training after {round(duration_mins, 2)} mins")
-torch.save(model.state_dict(), f"{model_name}-{timestamp}-{fold_id}-final.pth")
+final_checkpoint = {
+    'model_state_dict': model.state_dict(),
+    'validation_metadata': validation_metadata,
+    'final_epoch': epoch + 1,
+    'training_duration_mins': duration_mins,
+    'model_name': model_name,
+    'timestamp': timestamp
+}
+torch.save(final_checkpoint, f"{model_name}-{timestamp}-{fold_id}-final.pth")
 
 # %%

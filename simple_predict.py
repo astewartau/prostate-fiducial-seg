@@ -144,8 +144,14 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     net = UNet3D(in_channels=1, out_channels=3).to(device)
-    state = torch.load(args.model, map_location=device)
-    net.load_state_dict(state)
+    checkpoint = torch.load(args.model, map_location=device)
+
+    # Handle both raw state dict and checkpoint with metadata
+    if 'model_state_dict' in checkpoint:
+        net.load_state_dict(checkpoint['model_state_dict'])
+    else:
+        net.load_state_dict(checkpoint)
+
     net.eval()
 
     orig = nib.load(args.input)
