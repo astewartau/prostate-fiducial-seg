@@ -56,7 +56,7 @@ def find_rs_file(dicom_dir, subject_id):
 
 def find_re_file(dicom_dir, subject_id):
     """Find RE (registration) DICOM file."""
-    candidates = sorted(glob.glob(os.path.join(dicom_dir, f"RE.{subject_id}.REGISTRATION*.dcm")))
+    candidates = sorted(glob.glob(os.path.join(dicom_dir, f"RE.{subject_id}.*.dcm")))
     base_candidates = [c for c in candidates if not c.endswith(".0001.dcm")]
     if base_candidates:
         return base_candidates[0]
@@ -67,14 +67,17 @@ def find_re_file(dicom_dir, subject_id):
 
 def find_mri_nifti(bids_dir, subject_id):
     """Find MRI NIfTI from BIDS structure."""
-    bids_subject = os.path.join(bids_dir, f"sub-{subject_id}", "ses-na", "extra_data")
-    candidates = sorted(glob.glob(os.path.join(bids_subject, "*.nii")))
-    if candidates:
-        return candidates[0]
-    # Also try .nii.gz
-    candidates = sorted(glob.glob(os.path.join(bids_subject, "*.nii.gz")))
-    if candidates:
-        return candidates[0]
+    # Try any session directory and subdirectory (extra_data/, anat/, etc.)
+    subdirs = sorted(glob.glob(os.path.join(bids_dir, f"sub-{subject_id}", "ses-*", "*")))
+    for subdir in subdirs:
+        if not os.path.isdir(subdir):
+            continue
+        candidates = sorted(glob.glob(os.path.join(subdir, "*.nii")))
+        if candidates:
+            return candidates[0]
+        candidates = sorted(glob.glob(os.path.join(subdir, "*.nii.gz")))
+        if candidates:
+            return candidates[0]
     return None
 
 
@@ -154,10 +157,11 @@ def process_subject(subject_id, dicom_dir, bids_dir, output_base, force=False):
             chosen_rois.add(name)
 
     for base in ["GS1", "GS2", "GS3"]:
+        # Extract both base and _01 variants if present (some have empty contours)
+        if base in all_roi_names:
+            chosen_rois.add(base)
         if f"{base}_01" in all_roi_names:
             chosen_rois.add(f"{base}_01")
-        elif base in all_roi_names:
-            chosen_rois.add(base)
 
     if not chosen_rois:
         print(f"  ERROR: No GS or CTV ROIs found in RTSTRUCT")

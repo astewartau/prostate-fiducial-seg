@@ -12,6 +12,8 @@
 #SBATCH --output=logs/prod_%j.out
 #SBATCH --error=logs/prod_%j.err
 
+export PYTHONUNBUFFERED=1
+
 echo "Starting production training on $(hostname) at $(date)"
 echo "SEED=${SEED}"
 

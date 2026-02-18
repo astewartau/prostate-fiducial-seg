@@ -41,6 +41,7 @@ parser.add_argument('--mode', default='loocv', choices=['loocv', 'production'],
 parser.add_argument('--val-dir', default=None, help='Directory with validation subjects (production mode)')
 parser.add_argument('--val-subjects', default=None, help='File listing validation subject IDs, one per line')
 parser.add_argument('--seed', type=int, default=42, help='Random seed for reproducibility')
+parser.add_argument('--epochs', type=int, default=1300, help='Maximum training epochs')
 args = parser.parse_args()
 
 model_name = args.model_name
@@ -56,7 +57,7 @@ if torch.cuda.is_available():
     torch.cuda.manual_seed_all(random_state)
 
 batch_size = 6
-training_epochs = 1300
+training_epochs = args.epochs
 lr = 0.003
 num_classes = 3
 ce_loss_weights = torch.tensor([1, 5, 1], dtype=torch.float32)
