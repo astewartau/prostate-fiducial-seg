@@ -1,0 +1,26 @@
+# Data (large, not tracked)
+data/
+models/
+logs/
+archive/
+results/
+
+# File types
+*.out
+*.err
+*.pth*
+*.png
+*.json
+*.nii
+*.nii.gz
+*.csv
+*.ipynb
+
+# Python
+*pyc
+__pycache__/
+
+# OS/editor
+.trashinfo
+.Trash-*/
+.vscode/
