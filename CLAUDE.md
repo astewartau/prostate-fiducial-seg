@@ -94,14 +94,14 @@ Connected-component-based with binary dilation:
 
 | Script | Purpose | Usage |
 |--------|---------|-------|
-| `scripts/training/train_one_model.py` | Train one fold | `python scripts/training/train_one_model.py T1 0 --data-dir data/train --output-dir models/loocv` |
-| `scripts/inference/consensus_inference.py` | Consensus inference | `python scripts/inference/consensus_inference.py --models models/loocv/*.pth --input scan.nii --output results/` |
-| `scripts/inference/predict.py` | Single-model inference | `python scripts/inference/predict.py -i scan.nii -m model.pth -o output/` |
-| `scripts/preprocessing/extract_rois.py` | Extract ROIs from RTSTRUCT | Run from directory with subject folders |
-| `scripts/preprocessing/create_combined_seeds.py` | Create seeds.nii.gz | `python scripts/preprocessing/create_combined_seeds.py --data-dir data/train` |
-| `scripts/preprocessing/homogeneity_correction.py` | N4 bias correction | Edit input path in script |
-| `scripts/preprocessing/prepare_test_data.py` | Prepare test subjects end-to-end | `python scripts/preprocessing/prepare_test_data.py --dicom-dir data/test/dicoms --bids-dir data/test/bids --output-dir data/test/prepared` |
+| `scripts/training/train_one_model.py` | Train one model | `python scripts/training/train_one_model.py T1 --mode production --seed 42 --data-dir data/train --val-dir data/test/prepared --val-subjects data/val_subjects.txt --output-dir models/production` |
 | `scripts/training/train_production_models.sh` | Submit 4 production training jobs | `bash scripts/training/train_production_models.sh` |
+| `scripts/inference/consensus_inference.py` | Consensus inference | `python scripts/inference/consensus_inference.py --models models/production/*.pth --input scan.nii --output results/` |
+| `scripts/evaluation/ensemble_top3_evaluation_efficient.py` | Evaluate ensemble metrics | `python scripts/evaluation/ensemble_top3_evaluation_efficient.py --model_dir models/loocv --data-dir data/train` |
+| `scripts/preprocessing/prepare_test_data.py` | Prepare test subjects end-to-end | `python scripts/preprocessing/prepare_test_data.py --dicom-dir data/test/dicoms --bids-dir data/test/bids --output-dir data/test/prepared` |
+| `scripts/preprocessing/extract_rois.py` | Extract ROIs from RTSTRUCT | Imported by `prepare_test_data.py` |
+| `scripts/preprocessing/homogeneity_correction.py` | N4 bias correction | `python scripts/preprocessing/homogeneity_correction.py --input scan.nii --output corrected.nii` |
+| `scripts/preprocessing/create_combined_seeds.py` | Create seeds.nii.gz | `python scripts/preprocessing/create_combined_seeds.py --data-dir data/train` |
 
 ## Environment
 
