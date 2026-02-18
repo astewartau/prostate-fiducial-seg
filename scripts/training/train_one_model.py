@@ -13,6 +13,8 @@ import time
 import datetime
 import sys
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -66,87 +68,10 @@ else:
     device = torch.device("cpu")
     print("GPU is NOT available. Using CPU.")
 
-# --- Data preparation: Build dataframe from bids directories ---
-bids_dirs = [args.data_dir]
+# --- Data preparation ---
+from utils.data_loading import build_subject_dataframe
 
-# Setup dictionary to hold paths for each subject
-# This will be used to create a pandas dataframe later
-# Initialize an empty list to hold the paths
-paths_list = []
-
-for bids_dir in bids_dirs:
-    subject_dirs = sorted(glob.glob(os.path.join(bids_dir, "z*")))
-
-    for subject_dir in subject_dirs:
-        subject_id = os.path.basename(subject_dir)
-
-        # Check if roi_niftis_mri_space/ directory exists
-        roi_dir = os.path.join(subject_dir, "roi_niftis_mri_space")
-        if not os.path.exists(roi_dir):
-            print(f"Skipping {subject_id} as roi_niftis_mri_space directory does not exist.")
-            continue
-
-        # Get all nifti files
-        nii_paths = glob.glob(os.path.join(subject_dir, "*.nii")) + \
-                    glob.glob(os.path.join(subject_dir, "*.nii.gz"))
-
-        # Get all nifti files in the roi_niftis_mri_space directory
-        nii_paths += glob.glob(os.path.join(roi_dir, "*.nii")) + \
-                     glob.glob(os.path.join(roi_dir, "*.nii.gz"))
-
-        paths_dict = {}
-
-        for nii_path in nii_paths:
-            paths_dict['subject_id'] = subject_id
-            file_name = os.path.basename(nii_path).split('.')[0]
-
-            if 'GS1' in file_name:
-                segmentation_name = "GS1"
-            elif 'GS2' in file_name:
-                segmentation_name = "GS2"
-            elif 'GS3' in file_name:
-                segmentation_name = "GS3"
-            else:
-                segmentation_name = "_".join(file_name.split('_')[1:])
-
-            if segmentation_name == "roi_CTV_High_MR":
-                segmentation_name = "Prostate"
-            
-            paths_dict[segmentation_name] = nii_path
-
-        # Append the dictionary to the list
-        paths_list.append(paths_dict)
-
-# Convert the list of dictionaries to a pandas DataFrame
-df = pd.DataFrame(paths_list)
-# Replace NaN values with None
-df = df.where(pd.notnull(df), None)
-
-# For rows with no Prostate segmentation, if there is a roi_CTV_Low_MR segmentation, use it as Prostate
-for index, row in df.iterrows():
-    if row.get('Prostate') is None and row.get('roi_CTV_Low_MR') is not None:
-        df.at[index, 'Prostate'] = row['roi_CTV_Low_MR']
-
-for index, row in df.iterrows():
-    if row.get('Prostate') is None and row.get('roi_CTVp_MR') is not None:
-        df.at[index, 'Prostate'] = row['roi_CTVp_MR']
-
-# Remove all columns except
-columns_to_keep = ['subject_id', 'MRI', 'MRI_homogeneity-corrected', 'CT', 'seeds', 'Prostate']
-df = df[columns_to_keep]
-
-# Keep only rows that have both the input and segmentation files.
-infile_cols = ['MRI_homogeneity-corrected']
-seg_col = 'seeds'
-
-# Remove rows with missing values in the required columns
-for col in infile_cols + [seg_col]:
-    if col not in df.columns:
-        raise ValueError(f"Column {col} not found in DataFrame.")
-    df = df[df[col].notna()].reset_index(drop=True)
-
-print(f"Number of subjects: {len(df)}")
-print(f"infile_cols: {infile_cols}; segmentation column: {seg_col}")
+df, infile_cols, seg_col = build_subject_dataframe(args.data_dir)
 
 #%%
 # --- Data splitting ---
@@ -164,59 +89,19 @@ elif args.mode == 'production':
     if not args.val_dir:
         raise ValueError("--val-dir is required in production mode")
 
-    # Load validation subject list
+    # Load validation subject list for filtering
     val_subject_ids = None
     if args.val_subjects:
         with open(args.val_subjects) as f:
             val_subject_ids = [line.strip() for line in f if line.strip()]
         print(f"Loaded {len(val_subject_ids)} validation subject IDs from {args.val_subjects}")
 
-    # Build validation dataframe from val-dir (same logic as training data)
-    val_paths_list = []
-    val_subject_dirs = sorted(glob.glob(os.path.join(args.val_dir, "z*")))
-    for subject_dir in val_subject_dirs:
-        subject_id = os.path.basename(subject_dir)
-        if val_subject_ids and subject_id not in val_subject_ids:
-            continue
-        roi_dir = os.path.join(subject_dir, "roi_niftis_mri_space")
-        if not os.path.exists(roi_dir):
-            print(f"Skipping val subject {subject_id}: no roi_niftis_mri_space directory")
-            continue
-        nii_paths = glob.glob(os.path.join(subject_dir, "*.nii")) + \
-                    glob.glob(os.path.join(subject_dir, "*.nii.gz"))
-        nii_paths += glob.glob(os.path.join(roi_dir, "*.nii")) + \
-                     glob.glob(os.path.join(roi_dir, "*.nii.gz"))
-        paths_dict = {}
-        for nii_path in nii_paths:
-            paths_dict['subject_id'] = subject_id
-            file_name = os.path.basename(nii_path).split('.')[0]
-            if 'GS1' in file_name:
-                segmentation_name = "GS1"
-            elif 'GS2' in file_name:
-                segmentation_name = "GS2"
-            elif 'GS3' in file_name:
-                segmentation_name = "GS3"
-            else:
-                segmentation_name = "_".join(file_name.split('_')[1:])
-            if segmentation_name == "roi_CTV_High_MR":
-                segmentation_name = "Prostate"
-            paths_dict[segmentation_name] = nii_path
-        val_paths_list.append(paths_dict)
+    # Build validation dataframe
+    df_val, _, _ = build_subject_dataframe(args.val_dir)
 
-    df_val = pd.DataFrame(val_paths_list)
-    df_val = df_val.where(pd.notnull(df_val), None)
-    for index, row in df_val.iterrows():
-        if row.get('Prostate') is None and row.get('roi_CTV_Low_MR') is not None:
-            df_val.at[index, 'Prostate'] = row['roi_CTV_Low_MR']
-    for index, row in df_val.iterrows():
-        if row.get('Prostate') is None and row.get('roi_CTVp_MR') is not None:
-            df_val.at[index, 'Prostate'] = row['roi_CTVp_MR']
-    # Keep only columns that exist in both dataframes
-    val_cols = [c for c in columns_to_keep if c in df_val.columns]
-    df_val = df_val[val_cols]
-    for col in infile_cols + [seg_col]:
-        if col in df_val.columns:
-            df_val = df_val[df_val[col].notna()].reset_index(drop=True)
+    # Filter to only requested validation subjects
+    if val_subject_ids:
+        df_val = df_val[df_val['subject_id'].isin(val_subject_ids)].reset_index(drop=True)
 
     # All training subjects are used for training
     train_index = list(range(len(df)))
@@ -357,8 +242,14 @@ elif args.mode == 'production':
 
 print(f"\nValidation metadata: {validation_metadata}\n")
 
+validation_transforms = tio.Compose([
+    PadToCompatibleSize(min_factor=32),
+    tio.ZNormalization(),
+    MergeInputChannels(infile_cols)
+])
+
 train_subjects_dataset = tio.SubjectsDataset(subjects_train, transform=training_transforms)
-valid_subjects_dataset = tio.SubjectsDataset(subjects_valid, transform=training_transforms)
+valid_subjects_dataset = tio.SubjectsDataset(subjects_valid, transform=validation_transforms)
 
 class TorchIODatasetWrapper(torch.utils.data.Dataset):
     def __init__(self, subjects_dataset):
@@ -383,53 +274,7 @@ train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 valid_loader = DataLoader(valid_dataset, batch_size=batch_size, shuffle=False)
 
 # --- 3D UNet model definition ---
-class UNet3D(nn.Module):
-    def __init__(self, in_channels, out_channels, channels=(16, 32, 64, 128, 256)):
-        super(UNet3D, self).__init__()
-        self.encoders = nn.ModuleList()
-        self.pool = nn.MaxPool3d(kernel_size=2, stride=2)
-        prev_channels = in_channels
-        for ch in channels:
-            self.encoders.append(self.conv_block(prev_channels, ch))
-            prev_channels = ch
-        self.bottleneck = self.conv_block(prev_channels, prev_channels * 2)
-        rev_channels = list(reversed(channels))
-        self.upconvs = nn.ModuleList()
-        self.decoders = nn.ModuleList()
-        cur_channels = prev_channels * 2
-        for ch in rev_channels:
-            self.upconvs.append(nn.ConvTranspose3d(cur_channels, ch, kernel_size=2, stride=2))
-            self.decoders.append(self.conv_block(ch * 2, ch))
-            cur_channels = ch
-        self.final_conv = nn.Conv3d(cur_channels, out_channels, kernel_size=1)
-    def conv_block(self, in_channels, out_channels):
-        return nn.Sequential(
-            nn.Conv3d(in_channels, out_channels, kernel_size=3, padding=1),
-            nn.BatchNorm3d(out_channels),
-            nn.ReLU(inplace=True),
-            nn.Conv3d(out_channels, out_channels, kernel_size=3, padding=1),
-            nn.BatchNorm3d(out_channels),
-            nn.ReLU(inplace=True)
-        )
-    def forward(self, x):
-        enc_feats = []
-        for encoder in self.encoders:
-            x = encoder(x)
-            enc_feats.append(x)
-            x = self.pool(x)
-        x = self.bottleneck(x)
-        for upconv, decoder, enc in zip(self.upconvs, self.decoders, reversed(enc_feats)):
-            x = upconv(x)
-            if x.shape != enc.shape:
-                diffZ = enc.size()[2] - x.size()[2]
-                diffY = enc.size()[3] - x.size()[3]
-                diffX = enc.size()[4] - x.size()[4]
-                x = F.pad(x, [diffX // 2, diffX - diffX // 2,
-                              diffY // 2, diffY - diffY // 2,
-                              diffZ // 2, diffZ - diffZ // 2])
-            x = torch.cat([enc, x], dim=1)
-            x = decoder(x)
-        return self.final_conv(x)
+from models import UNet3D
 
 model = UNet3D(in_channels=len(infile_cols), out_channels=num_classes).to(device)
 

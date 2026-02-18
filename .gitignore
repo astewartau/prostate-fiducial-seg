@@ -1,6 +1,6 @@
 # Data (large, not tracked)
 data/
-models/
+/models/
 logs/
 archive/
 results/

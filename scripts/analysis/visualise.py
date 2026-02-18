@@ -12,54 +12,9 @@ import torchio as tio
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 
-# --- 3D UNet (matching training) ---
-class UNet3D(nn.Module):
-    def __init__(self, in_channels, out_channels, channels=(16,32,64,128,256)):
-        super().__init__()
-        self.encoders = nn.ModuleList()
-        self.pool = nn.MaxPool3d(2)
-        prev_ch = in_channels
-        for ch in channels:
-            self.encoders.append(self._conv_block(prev_ch, ch))
-            prev_ch = ch
-        self.bottleneck = self._conv_block(prev_ch, prev_ch*2)
-        rev = list(reversed(channels))
-        self.upconvs = nn.ModuleList()
-        self.decoders = nn.ModuleList()
-        cur_ch = prev_ch*2
-        for ch in rev:
-            self.upconvs.append(nn.ConvTranspose3d(cur_ch, ch, kernel_size=2, stride=2))
-            self.decoders.append(self._conv_block(ch*2, ch))
-            cur_ch = ch
-        self.final_conv = nn.Conv3d(cur_ch, out_channels, kernel_size=1)
-
-    def _conv_block(self, in_ch, out_ch):
-        return nn.Sequential(
-            nn.Conv3d(in_ch, out_ch, 3, padding=1),
-            nn.BatchNorm3d(out_ch),
-            nn.ReLU(inplace=True),
-            nn.Conv3d(out_ch, out_ch, 3, padding=1),
-            nn.BatchNorm3d(out_ch),
-            nn.ReLU(inplace=True),
-        )
-
-    def forward(self, x):
-        feats = []
-        for enc in self.encoders:
-            x = enc(x)
-            feats.append(x)
-            x = self.pool(x)
-        x = self.bottleneck(x)
-        for up, dec, enc_feat in zip(self.upconvs, self.decoders, reversed(feats)):
-            x = up(x)
-            if x.shape != enc_feat.shape:
-                dz = enc_feat.size(2) - x.size(2)
-                dy = enc_feat.size(3) - x.size(3)
-                dx = enc_feat.size(4) - x.size(4)
-                x = F.pad(x, [dx//2, dx-dx//2, dy//2, dy-dy//2, dz//2, dz-dz//2])
-            x = torch.cat([enc_feat, x], dim=1)
-            x = dec(x)
-        return self.final_conv(x)
+import sys as _sys
+_sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from models import UNet3D
 
 # --- Function to find nearest compatible dimensions for UNet ---
 def find_nearest_compatible_size(input_shape, min_factor=32):
@@ -94,76 +49,8 @@ def pad_or_crop_numpy(vol, target):
             pad_width.append((0, 0))
     return np.pad(vol_c, pad_width, mode='constant', constant_values=0)
 
-# --- Data preparation: Build dataframe from bids directories ---
-def build_dataframe():
-    bids_dirs = ["bids-2025-2"]
-    paths_list = []
-
-    for bids_dir in bids_dirs:
-        subject_dirs = sorted(glob.glob(os.path.join(bids_dir, "z*")))
-
-        for subject_dir in subject_dirs:
-            subject_id = os.path.basename(subject_dir)
-
-            # Check if roi_niftis_mri_space/ directory exists
-            roi_dir = os.path.join(subject_dir, "roi_niftis_mri_space")
-            if not os.path.exists(roi_dir):
-                print(f"Skipping {subject_id} as roi_niftis_mri_space directory does not exist.")
-                continue
-
-            # Get all nifti files
-            nii_paths = glob.glob(os.path.join(subject_dir, "*.nii*"))
-            nii_paths += glob.glob(os.path.join(roi_dir, "*.nii*"))
-
-            paths_dict = {}
-
-            for nii_path in nii_paths:
-                paths_dict['subject_id'] = subject_id
-                file_name = os.path.basename(nii_path).split('.')[0]
-
-                if 'GS1' in file_name:
-                    segmentation_name = "GS1"
-                elif 'GS2' in file_name:
-                    segmentation_name = "GS2"
-                elif 'GS3' in file_name:
-                    segmentation_name = "GS3"
-                else:
-                    segmentation_name = "_".join(file_name.split('_')[1:])
-
-                if segmentation_name == "roi_CTV_High_MR":
-                    segmentation_name = "Prostate"
-                
-                paths_dict[segmentation_name] = nii_path
-
-            paths_list.append(paths_dict)
-
-    # Convert to DataFrame
-    df = pd.DataFrame(paths_list)
-    df = df.where(pd.notnull(df), None)
-
-    # Handle missing Prostate segmentations
-    for index, row in df.iterrows():
-        if row.get('Prostate') is None and row.get('roi_CTV_Low_MR') is not None:
-            df.at[index, 'Prostate'] = row['roi_CTV_Low_MR']
-
-    for index, row in df.iterrows():
-        if row.get('Prostate') is None and row.get('roi_CTVp_MR') is not None:
-            df.at[index, 'Prostate'] = row['roi_CTVp_MR']
-
-    # Keep only required columns
-    columns_to_keep = ['subject_id', 'MRI', 'MRI_homogeneity-corrected', 'CT', 'seeds', 'Prostate']
-    df = df[columns_to_keep]
-
-    # Filter for subjects with required files
-    infile_cols = ['MRI_homogeneity-corrected']
-    
-    for col in infile_cols:
-        if col not in df.columns:
-            raise ValueError(f"Column {col} not found in DataFrame.")
-        df = df[df[col].notna()].reset_index(drop=True)
-
-    print(f"Number of subjects: {len(df)}")
-    return df
+# --- Data loading ---
+from utils.data_loading import build_subject_dataframe
 
 # --- Run inference on a single image ---
 def run_inference(model, input_path, device):
@@ -338,6 +225,7 @@ def visualize_predictions(df, model, device, output_dir, max_subjects=None):
 def main():
     parser = argparse.ArgumentParser(description="Run batch inference and visualize prostate predictions")
     parser.add_argument('--model', required=True, help="Path to .pth model file")
+    parser.add_argument('--data-dir', default='data/train', help="Path to data directory with subject folders")
     parser.add_argument('--output', default='./visualizations', help="Output directory for visualizations")
     parser.add_argument('--max_subjects', type=int, help="Maximum number of subjects to process (for testing)")
     args = parser.parse_args()
@@ -356,7 +244,7 @@ def main():
 
     # Build dataframe
     print("Building dataframe...")
-    df = build_dataframe()
+    df, _, _ = build_subject_dataframe(args.data_dir)
     
     if len(df) == 0:
         print("No subjects found!")

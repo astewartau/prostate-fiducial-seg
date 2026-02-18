@@ -23,7 +23,7 @@ def show_histogram(data, mask=None, title=None, dim=0, n_bins=100, n_ticks=10, v
 
     # data subplot
     if vrange_imshow is None: vrange_imshow = (float(data.min()), float(data.max()))
-    ax1.set_title = "Data"
+    ax1.set_title("Data")
     im = ax1.imshow(slice, vmin=vrange_imshow[0], vmax=vrange_imshow[1], cmap=cmap, **args)
     if mask is not None: ax1.imshow(mask_slice, cmap='jet', interpolation='none', alpha=1.0*(mask_slice>0))
     ax1.set_axis_off()
@@ -32,7 +32,7 @@ def show_histogram(data, mask=None, title=None, dim=0, n_bins=100, n_ticks=10, v
     # histogram subplot
     if vrange_hist is None: vrange_hist = (float(data.min()), float(data.max()))
     hist = torch.histc(data, bins=n_bins, min=vrange_hist[0], max=vrange_hist[1])
-    ax2.set_title = "Histogram"
+    ax2.set_title("Histogram")
     ax2.bar(range(len(hist)), hist, align='center', color='skyblue')
     if vrange_ylim: ax2.set_ylim(vrange_ylim[0], vrange_ylim[1])
     if mask is not None:

@@ -24,54 +24,9 @@ import scipy.ndimage
 from pathlib import Path
 
 
-# --- 3D UNet (matching training) ---
-class UNet3D(nn.Module):
-    def __init__(self, in_channels, out_channels, channels=(16, 32, 64, 128, 256)):
-        super().__init__()
-        self.encoders = nn.ModuleList()
-        self.pool = nn.MaxPool3d(2)
-        prev_ch = in_channels
-        for ch in channels:
-            self.encoders.append(self._conv_block(prev_ch, ch))
-            prev_ch = ch
-        self.bottleneck = self._conv_block(prev_ch, prev_ch * 2)
-        rev = list(reversed(channels))
-        self.upconvs = nn.ModuleList()
-        self.decoders = nn.ModuleList()
-        cur_ch = prev_ch * 2
-        for ch in rev:
-            self.upconvs.append(nn.ConvTranspose3d(cur_ch, ch, kernel_size=2, stride=2))
-            self.decoders.append(self._conv_block(ch * 2, ch))
-            cur_ch = ch
-        self.final_conv = nn.Conv3d(cur_ch, out_channels, kernel_size=1)
-
-    def _conv_block(self, in_ch, out_ch):
-        return nn.Sequential(
-            nn.Conv3d(in_ch, out_ch, 3, padding=1),
-            nn.BatchNorm3d(out_ch),
-            nn.ReLU(inplace=True),
-            nn.Conv3d(out_ch, out_ch, 3, padding=1),
-            nn.BatchNorm3d(out_ch),
-            nn.ReLU(inplace=True),
-        )
-
-    def forward(self, x):
-        feats = []
-        for enc in self.encoders:
-            x = enc(x)
-            feats.append(x)
-            x = self.pool(x)
-        x = self.bottleneck(x)
-        for up, dec, enc_feat in zip(self.upconvs, self.decoders, reversed(feats)):
-            x = up(x)
-            if x.shape != enc_feat.shape:
-                dz = enc_feat.size(2) - x.size(2)
-                dy = enc_feat.size(3) - x.size(3)
-                dx = enc_feat.size(4) - x.size(4)
-                x = F.pad(x, [dx//2, dx-dx//2, dy//2, dy-dy//2, dz//2, dz-dz//2])
-            x = torch.cat([enc_feat, x], dim=1)
-            x = dec(x)
-        return self.final_conv(x)
+import sys as _sys
+_sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from models import UNet3D
 
 
 def find_nearest_compatible_size(input_shape, min_factor=32):
@@ -109,7 +64,7 @@ def pad_or_crop_numpy(vol, target):
     return np.pad(vol_c, pad_width, mode='constant', constant_values=0)
 
 
-def select_top_n_markers(probability_map, n_markers=3, structure=None):
+def select_top_n_markers(probability_map, n_markers=3, structure=None, threshold=0.1):
     """
     Select top N markers from probability map based on connected component analysis.
 
@@ -117,16 +72,13 @@ def select_top_n_markers(probability_map, n_markers=3, structure=None):
         probability_map: 3D numpy array of probabilities for marker class
         n_markers: Number of top markers to keep (default: 3)
         structure: Structuring element for connected component labeling
+        threshold: Minimum probability to consider a voxel as candidate (default: 0.1)
 
     Returns:
         Binary segmentation with only top N markers
     """
     if structure is None:
         structure = np.ones((3, 3, 3), dtype=bool)
-
-    # Threshold probability map to get candidate regions
-    # Use a lower threshold to capture potential markers
-    threshold = 0.1
     binary_mask = (probability_map > threshold).astype(np.int32)
 
     # Label connected components
@@ -341,7 +293,8 @@ Examples:
     consensus_seg = select_top_n_markers(
         avg_probability_map,
         n_markers=args.n_markers,
-        structure=np.ones((3, 3, 3), dtype=bool)
+        structure=np.ones((3, 3, 3), dtype=bool),
+        threshold=args.threshold
     )
 
     # Save consensus segmentation

@@ -25,56 +25,8 @@ from sklearn.model_selection import KFold
 import pandas as pd
 import matplotlib.pyplot as plt
 
-# Import model architecture from training script
-class UNet3D(nn.Module):
-    def __init__(self, in_channels, out_channels, channels=(16, 32, 64, 128, 256)):
-        super(UNet3D, self).__init__()
-        self.encoders = nn.ModuleList()
-        self.pool = nn.MaxPool3d(kernel_size=2, stride=2)
-        prev_channels = in_channels
-        for ch in channels:
-            self.encoders.append(self.conv_block(prev_channels, ch))
-            prev_channels = ch
-        self.bottleneck = self.conv_block(prev_channels, prev_channels * 2)
-        rev_channels = list(reversed(channels))
-        self.upconvs = nn.ModuleList()
-        self.decoders = nn.ModuleList()
-        cur_channels = prev_channels * 2
-        for ch in rev_channels:
-            self.upconvs.append(nn.ConvTranspose3d(cur_channels, ch, kernel_size=2, stride=2))
-            self.decoders.append(self.conv_block(ch * 2, ch))
-            cur_channels = ch
-        self.final_conv = nn.Conv3d(cur_channels, out_channels, kernel_size=1)
-
-    def conv_block(self, in_channels, out_channels):
-        return nn.Sequential(
-            nn.Conv3d(in_channels, out_channels, kernel_size=3, padding=1),
-            nn.BatchNorm3d(out_channels),
-            nn.ReLU(inplace=True),
-            nn.Conv3d(out_channels, out_channels, kernel_size=3, padding=1),
-            nn.BatchNorm3d(out_channels),
-            nn.ReLU(inplace=True)
-        )
-
-    def forward(self, x):
-        enc_feats = []
-        for encoder in self.encoders:
-            x = encoder(x)
-            enc_feats.append(x)
-            x = self.pool(x)
-        x = self.bottleneck(x)
-        for upconv, decoder, enc in zip(self.upconvs, self.decoders, reversed(enc_feats)):
-            x = upconv(x)
-            if x.shape != enc.shape:
-                diffZ = enc.size()[2] - x.size()[2]
-                diffY = enc.size()[3] - x.size()[3]
-                diffX = enc.size()[4] - x.size()[4]
-                x = F.pad(x, [diffX // 2, diffX - diffX // 2,
-                              diffY // 2, diffY - diffY // 2,
-                              diffZ // 2, diffZ - diffZ // 2])
-            x = torch.cat([enc, x], dim=1)
-            x = decoder(x)
-        return self.final_conv(x)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from models import UNet3D
 
 class PadToCompatibleSize(tio.Transform):
     def __init__(self, min_factor=32):
@@ -121,75 +73,7 @@ class MergeInputChannels(tio.Transform):
         subject['mask'] = subject['seg']
         return subject
 
-def build_subject_dataframe(bids_dirs):
-    """Build dataframe of subjects."""
-    paths_list = []
-
-    for bids_dir in bids_dirs:
-        subject_dirs = sorted(glob.glob(os.path.join(bids_dir, "z*")))
-
-        for subject_dir in subject_dirs:
-            subject_id = os.path.basename(subject_dir)
-
-            # Skip excluded subjects
-            if os.path.exists(os.path.join(subject_dir, "EXCLUDE_INVALID_SEGMENTATION")):
-                print(f"Skipping {subject_id}: marked as EXCLUDE_INVALID_SEGMENTATION")
-                continue
-
-            roi_dir = os.path.join(subject_dir, "roi_niftis_mri_space")
-            if not os.path.exists(roi_dir):
-                continue
-
-            nii_paths = glob.glob(os.path.join(subject_dir, "*.nii")) + \
-                        glob.glob(os.path.join(subject_dir, "*.nii.gz"))
-            nii_paths += glob.glob(os.path.join(roi_dir, "*.nii")) + \
-                         glob.glob(os.path.join(roi_dir, "*.nii.gz"))
-
-            paths_dict = {}
-
-            for nii_path in nii_paths:
-                paths_dict['subject_id'] = subject_id
-                file_name = os.path.basename(nii_path).split('.')[0]
-
-                if 'GS1' in file_name:
-                    segmentation_name = "GS1"
-                elif 'GS2' in file_name:
-                    segmentation_name = "GS2"
-                elif 'GS3' in file_name:
-                    segmentation_name = "GS3"
-                else:
-                    segmentation_name = "_".join(file_name.split('_')[1:])
-
-                if segmentation_name == "roi_CTV_High_MR":
-                    segmentation_name = "Prostate"
-
-                paths_dict[segmentation_name] = nii_path
-
-            paths_list.append(paths_dict)
-
-    df = pd.DataFrame(paths_list)
-    df = df.where(pd.notnull(df), None)
-
-    # Handle Prostate segmentation fallbacks
-    for index, row in df.iterrows():
-        if row.get('Prostate') is None and row.get('roi_CTV_Low_MR') is not None:
-            df.at[index, 'Prostate'] = row['roi_CTV_Low_MR']
-
-    for index, row in df.iterrows():
-        if row.get('Prostate') is None and row.get('roi_CTVp_MR') is not None:
-            df.at[index, 'Prostate'] = row['roi_CTVp_MR']
-
-    columns_to_keep = ['subject_id', 'MRI', 'MRI_homogeneity-corrected', 'CT', 'seeds', 'Prostate']
-    df = df[columns_to_keep]
-
-    infile_cols = ['MRI_homogeneity-corrected']
-    seg_col = 'seeds'
-
-    for col in infile_cols + [seg_col]:
-        if col in df.columns:
-            df = df[df[col].notna()].reset_index(drop=True)
-
-    return df
+from utils.data_loading import build_subject_dataframe
 
 def calculate_voxelwise_entropy(model, subject, device, infile_cols):
     """
@@ -271,11 +155,14 @@ def find_model_file(models_dir, fold_id):
     return best_file
 
 def main():
-    # Configuration
-    bids_dirs = ["/scratch/user/uqaste15/data/2024-prostate/bids-2025-2"]
-    models_dir = "/scratch/user/uqaste15/data/2024-prostate"
+    import argparse
+    parser = argparse.ArgumentParser(description='Calculate predictive entropy for LOOCV validation subjects')
+    parser.add_argument('--data-dir', default='data/train', help='Path to training data directory')
+    parser.add_argument('--models-dir', default='models/loocv', help='Directory containing model checkpoints')
+    parser.add_argument('--output', default='results/predictive_entropy_analysis.csv', help='Output CSV path')
+    args = parser.parse_args()
+
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    infile_cols = ['MRI_homogeneity-corrected']
     num_classes = 3
     random_state = 42
 
@@ -288,7 +175,7 @@ def main():
 
     # Build subject dataframe
     print("Building subject dataframe...")
-    df = build_subject_dataframe(bids_dirs)
+    df, infile_cols, seg_col = build_subject_dataframe(args.data_dir)
     print(f"Total subjects: {len(df)}")
     print()
 
@@ -302,7 +189,7 @@ def main():
         subject_dict = {}
         for col in infile_cols:
             subject_dict[col] = tio.ScalarImage(row[col])
-        subject_dict['seg'] = tio.LabelMap(row['seeds'])
+        subject_dict['seg'] = tio.LabelMap(row[seg_col])
         subject = tio.Subject(**subject_dict)
         subjects.append(subject)
 
@@ -313,7 +200,7 @@ def main():
         valid_subject_id = df.iloc[valid_index[0]]['subject_id']
 
         # Find model file
-        model_file = find_model_file(models_dir, fold_id)
+        model_file = find_model_file(args.models_dir, fold_id)
 
         if not model_file:
             print(f"Fold {fold_id} ({valid_subject_id}): No completed model found")
@@ -386,7 +273,7 @@ def main():
     print("=" * 80)
 
     # Save results
-    output_csv = "predictive_entropy_analysis.csv"
+    output_csv = args.output
     results_df.to_csv(output_csv, index=False)
     print(f"Detailed results saved to: {output_csv}")
 
@@ -438,7 +325,7 @@ def main():
         axes[1, 1].grid(True, alpha=0.3)
 
         plt.tight_layout()
-        output_plot = "predictive_entropy_analysis.png"
+        output_plot = args.output.replace('.csv', '.png')
         plt.savefig(output_plot, dpi=150, bbox_inches='tight')
         print(f"Visualization saved to: {output_plot}")
         plt.close()
