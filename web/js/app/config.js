@@ -1,7 +1,7 @@
 export const VERSION = '0.1.0';
 
 // Model URLs - GitHub Releases
-export const MODEL_BASE_URL = './models';
+export const MODEL_BASE_URL = 'https://github.com/astewartau/prostate-fiducial-seg/releases/download/v0.1.0';
 
 export const MODELS = [
   { name: 'seedseg-model-seed42.onnx', label: 'Model 1 (seed 42)', seed: 42 },
