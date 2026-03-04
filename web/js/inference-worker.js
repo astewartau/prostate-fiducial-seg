@@ -482,7 +482,8 @@ async function runInference(config) {
   const {
     selectedModels,
     threshold = 0.1,
-    nMarkers = 3
+    nMarkers = 3,
+    modelBaseUrl
   } = settings;
 
   // 1. Parse NIfTI input
@@ -515,9 +516,8 @@ async function runInference(config) {
   const totalModels = selectedModels.length;
 
   for (let i = 0; i < totalModels; i++) {
-    const model = selectedModels[i];
-    const modelName = model.name || model;
-    const modelUrl = model.url || modelName;
+    const modelName = selectedModels[i];
+    const modelUrl = `${modelBaseUrl}/${modelName}`;
     const perModelSpan = 0.65 / totalModels;
     const progressBase = 0.15 + i * perModelSpan;
     const dlSpan = perModelSpan * 0.6;   // 60% of per-model span for download
