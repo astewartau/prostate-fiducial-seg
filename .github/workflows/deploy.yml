@@ -47,18 +47,9 @@ jobs:
       - name: Update version in config.js
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          TAG="v$VERSION"
-
-          # Update version
           sed -i "s/^export const VERSION = '[^']*'/export const VERSION = '$VERSION'/" web/js/app/config.js
-
-          # Update model URL to point to GitHub Release assets
-          REPO="${{ github.repository }}"
-          MODEL_URL="https://github.com/$REPO/releases/download/$TAG"
-          sed -i "s|^export const MODEL_BASE_URL = '[^']*'|export const MODEL_BASE_URL = '$MODEL_URL'|" web/js/app/config.js
-
           echo "Updated config.js:"
-          head -5 web/js/app/config.js
+          head -3 web/js/app/config.js
 
       - name: Commit version bump
         if: github.event_name == 'release'

@@ -416,47 +416,63 @@ function averageProbabilityMaps(maps) {
 
 // ==================== Model Loading ====================
 
-async function fetchModel(url) {
-  // Fetch fresh copy (also to learn the expected size)
-  const fetchFresh = async () => {
-    postLog(`Downloading model: ${url.split('/').pop()}...`);
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch model: ${response.status} ${response.statusText}`);
-    }
-    const data = await response.arrayBuffer();
-    // Cache for next time
-    try {
-      await localforage.setItem(url, data);
-    } catch (e) {
-      postLog('Warning: Could not cache model (storage full?)');
-    }
-    return data;
-  };
+async function fetchModel(url, modelName, progressBase, progressSpan) {
+  const displayName = modelName || url.split('/').pop();
 
   // Check cache first
   try {
     const cached = await localforage.getItem(url);
-    if (cached) {
-      // Validate: HEAD request to check expected size
-      try {
-        const head = await fetch(url, { method: 'HEAD' });
-        const expectedSize = parseInt(head.headers.get('content-length'), 10);
-        if (expectedSize && cached.byteLength !== expectedSize) {
-          postLog(`Cached model size mismatch (${cached.byteLength} vs ${expectedSize}), re-downloading...`);
-          return await fetchFresh();
-        }
-      } catch (e) {
-        // HEAD failed, use cache anyway
-      }
-      postLog(`Model loaded from cache: ${url.split('/').pop()}`);
+    if (cached && cached.byteLength > 1000000) {
+      postLog(`Model loaded from cache: ${displayName}`);
+      postProgress(progressBase + progressSpan, `Cached: ${displayName}`);
       return cached;
     }
   } catch (e) {
     // Cache miss, continue to fetch
   }
 
-  return await fetchFresh();
+  // Stream download with progress
+  postLog(`Downloading: ${displayName}...`);
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch model: ${response.status} ${response.statusText}`);
+  }
+
+  const contentLength = parseInt(response.headers.get('content-length'), 10);
+  const reader = response.body.getReader();
+  const chunks = [];
+  let received = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    received += value.length;
+    if (contentLength) {
+      const dlProgress = received / contentLength;
+      const mb = (received / 1048576).toFixed(1);
+      const totalMb = (contentLength / 1048576).toFixed(0);
+      postProgress(progressBase + dlProgress * progressSpan, `Downloading ${displayName} (${mb}/${totalMb} MB)`);
+    }
+  }
+
+  // Combine chunks
+  const data = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    data.set(chunk, offset);
+    offset += chunk.length;
+  }
+
+  // Cache for next time
+  try {
+    await localforage.setItem(url, data.buffer);
+  } catch (e) {
+    postLog('Warning: Could not cache model (storage full?)');
+  }
+
+  postLog(`Downloaded: ${displayName} (${(received / 1048576).toFixed(1)} MB)`);
+  return data.buffer;
 }
 
 // ==================== Main Inference Pipeline ====================
@@ -466,8 +482,7 @@ async function runInference(config) {
   const {
     selectedModels,
     threshold = 0.1,
-    nMarkers = 3,
-    modelBaseUrl
+    nMarkers = 3
   } = settings;
 
   // 1. Parse NIfTI input
@@ -500,18 +515,19 @@ async function runInference(config) {
   const totalModels = selectedModels.length;
 
   for (let i = 0; i < totalModels; i++) {
-    const modelName = selectedModels[i];
-    const modelUrl = `${modelBaseUrl}/${modelName}`;
-    const progressBase = 0.15 + (i / totalModels) * 0.65;
+    const model = selectedModels[i];
+    const modelName = model.name || model;
+    const modelUrl = model.url || modelName;
+    const perModelSpan = 0.65 / totalModels;
+    const progressBase = 0.15 + i * perModelSpan;
+    const dlSpan = perModelSpan * 0.6;   // 60% of per-model span for download
+    const runBase = progressBase + dlSpan; // remaining 40% for inference
 
-    // Fetch model
-    postProgress(progressBase, `Downloading model ${i + 1}/${totalModels}...`);
-    postLog(`Fetching: ${modelUrl}`);
-    const modelData = await fetchModel(modelUrl);
-    postLog(`Model data: ${modelData.byteLength} bytes`);
+    // Fetch model (with download progress)
+    const modelData = await fetchModel(modelUrl, modelName, progressBase, dlSpan);
 
     // Create ONNX session
-    postProgress(progressBase + 0.05, `Loading model ${i + 1}/${totalModels}...`);
+    postProgress(runBase, `Loading model ${i + 1}/${totalModels}...`);
     postLog('Creating ONNX InferenceSession...');
     let session;
     try {
@@ -526,7 +542,7 @@ async function runInference(config) {
     postLog(`Session created. Inputs: ${session.inputNames}, Outputs: ${session.outputNames}`);
 
     // Create input tensor [1, 1, nx, ny, nz] — C-contiguous
-    postProgress(progressBase + 0.1, `Running model ${i + 1}/${totalModels}...`);
+    postProgress(runBase + perModelSpan * 0.2, `Running model ${i + 1}/${totalModels}...`);
     const inputTensor = new ort.Tensor(
       'float32',
       tensorData,

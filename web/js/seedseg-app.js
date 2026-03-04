@@ -520,7 +520,7 @@ class SeedSegApp {
     const selectedModels = [];
     Config.MODELS.forEach((model, i) => {
       const cb = document.getElementById(`model${i}`);
-      if (!cb || cb.checked) selectedModels.push(model.name);
+      if (!cb || cb.checked) selectedModels.push({ name: model.name, url: model.url });
     });
 
     if (selectedModels.length === 0) {
@@ -530,8 +530,6 @@ class SeedSegApp {
 
     const threshold = parseFloat(document.getElementById('probThreshold')?.value || '0.1');
     const nMarkers = parseInt(document.getElementById('nMarkers')?.value || '3');
-    // Resolve to absolute URL so the worker can fetch correctly (worker URLs resolve relative to worker script)
-    const modelBaseUrl = new URL(Config.MODEL_BASE_URL, window.location.href).href;
 
     // Read file
     const inputData = await file.arrayBuffer();
@@ -552,8 +550,7 @@ class SeedSegApp {
       settings: {
         selectedModels,
         threshold,
-        nMarkers,
-        modelBaseUrl
+        nMarkers
       }
     });
   }
