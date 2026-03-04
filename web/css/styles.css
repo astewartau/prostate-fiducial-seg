@@ -1385,6 +1385,120 @@ input[type="range"]:disabled::-moz-range-thumb {
   margin: 0 0 var(--space-sm);
 }
 
+/* Citations Modal */
+.citations-modal {
+  max-width: 700px;
+  max-height: 80vh;
+}
+
+.citations-intro {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  margin: 0 0 var(--space-lg) 0;
+  line-height: 1.5;
+}
+
+.citation-section {
+  margin-bottom: var(--space-lg);
+}
+
+.citation-section h4 {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--color-primary);
+  margin: 0 0 var(--space-sm) 0;
+  padding-bottom: var(--space-xs);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.citation-item {
+  margin-bottom: var(--space-md);
+  padding-left: var(--space-sm);
+  border-left: 2px solid var(--color-border);
+}
+
+.citation-item:last-child {
+  margin-bottom: 0;
+}
+
+.citation-item strong {
+  display: block;
+  font-size: 0.85rem;
+  color: var(--color-text);
+  margin-bottom: 4px;
+}
+
+.citation-item p {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  margin: 0 0 4px 0;
+  line-height: 1.4;
+}
+
+.citation-item em {
+  font-style: italic;
+}
+
+.citation-item a {
+  font-size: 0.75rem;
+  color: var(--color-primary);
+  text-decoration: none;
+}
+
+.citation-item a:hover {
+  text-decoration: underline;
+}
+
+.citation-ref {
+  display: block;
+  font-size: 0.7rem;
+  color: var(--color-text-muted);
+  margin-bottom: 4px;
+}
+
+.citation-ref a {
+  color: var(--color-primary);
+  text-decoration: none;
+}
+
+.citation-ref a:hover {
+  text-decoration: underline;
+}
+
+.citation-primary {
+  background: var(--color-surface-elevated);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  margin-bottom: var(--space-md);
+}
+
+.citation-primary .citation-item {
+  margin-bottom: 0;
+}
+
+.citation-primary strong {
+  font-size: 1.1rem;
+  color: var(--color-primary);
+}
+
+.ref-list {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  margin-bottom: 6px;
+  line-height: 1.4;
+}
+
+.ref-list a {
+  color: var(--color-primary);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.ref-list a:hover {
+  text-decoration: underline;
+}
+
 /* Utility Classes */
 .hidden {
   display: none !important;
