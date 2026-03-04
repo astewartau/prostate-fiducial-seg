@@ -28,7 +28,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: master
+          ref: main
 
       - name: Extract version from release tag
         id: version
@@ -67,7 +67,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add web/js/app/config.js
           git diff --staged --quiet || git commit -m "chore: bump version to ${{ steps.version.outputs.version }}"
-          git push origin master
+          git push origin main
 
       - name: Download ONNX Runtime WASM
         run: bash web/setup.sh
