@@ -1,11 +1,12 @@
 export const VERSION = '0.1.0';
 
 // Models hosted on OSF (https://osf.io/f7hjv/)
+// Direct file server URLs to avoid CORS issues with osf.io redirects
 export const MODELS = [
-  { name: 'seedseg-model-seed42.onnx', label: 'Model 1 (seed 42)', seed: 42, url: 'https://osf.io/download/69a7b3b11bb961e0a3e7d1d3/' },
-  { name: 'seedseg-model-seed123.onnx', label: 'Model 2 (seed 123)', seed: 123, url: 'https://osf.io/download/69a7b3b0a32ec43a2279789d/' },
-  { name: 'seedseg-model-seed456.onnx', label: 'Model 3 (seed 456)', seed: 456, url: 'https://osf.io/download/69a7b3b13233e4a733e7d719/' },
-  { name: 'seedseg-model-seed789.onnx', label: 'Model 4 (seed 789)', seed: 789, url: 'https://osf.io/download/69a7b3b1a32ec43a2279789f/' }
+  { name: 'seedseg-model-seed42.onnx', label: 'Model 1 (seed 42)', seed: 42, url: 'https://files.au-1.osf.io/v1/resources/f7hjv/providers/osfstorage/69a7b3b11bb961e0a3e7d1d3' },
+  { name: 'seedseg-model-seed123.onnx', label: 'Model 2 (seed 123)', seed: 123, url: 'https://files.au-1.osf.io/v1/resources/f7hjv/providers/osfstorage/69a7b3b0a32ec43a2279789d' },
+  { name: 'seedseg-model-seed456.onnx', label: 'Model 3 (seed 456)', seed: 456, url: 'https://files.au-1.osf.io/v1/resources/f7hjv/providers/osfstorage/69a7b3b13233e4a733e7d719' },
+  { name: 'seedseg-model-seed789.onnx', label: 'Model 4 (seed 789)', seed: 789, url: 'https://files.au-1.osf.io/v1/resources/f7hjv/providers/osfstorage/69a7b3b1a32ec43a2279789f' }
 ];
 
 export const INFERENCE_DEFAULTS = {
