@@ -531,8 +531,7 @@ class SeedSegApp {
     const threshold = parseFloat(document.getElementById('probThreshold')?.value || '0.1');
     const nMarkers = parseInt(document.getElementById('nMarkers')?.value || '3');
     // Resolve to absolute URL so the worker can fetch correctly (worker URLs resolve relative to worker script)
-    const rawUrl = document.getElementById('modelBaseUrl')?.value || Config.MODEL_BASE_URL;
-    const modelBaseUrl = new URL(rawUrl, window.location.href).href;
+    const modelBaseUrl = new URL(Config.MODEL_BASE_URL, window.location.href).href;
 
     // Read file
     const inputData = await file.arrayBuffer();
