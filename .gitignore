@@ -24,3 +24,9 @@ __pycache__/
 .trashinfo
 .Trash-*/
 .vscode/
+
+# Web app (browser-based inference)
+web/models/
+web/wasm/ort*
+web/wasm/qsm_wasm*
+web/node_modules/
