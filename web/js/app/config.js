@@ -1,4 +1,4 @@
-export const VERSION = '0.1.0';
+export const VERSION = '0.1.1';
 
 // Models - relative path (served from same origin, downloaded from OSF at deploy time)
 export const MODEL_BASE_URL = './models';
