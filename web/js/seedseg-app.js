@@ -82,6 +82,13 @@ class SeedSegApp {
     this.setupInputModeTabs();
     this.setupInfoTooltips();
 
+    // Log threading support
+    if (crossOriginIsolated) {
+      this.updateOutput('Multi-threaded WASM enabled');
+    } else {
+      this.updateOutput('Running single-threaded (COOP/COEP headers not set)');
+    }
+
     // Start ONNX initialization in background
     this.inferenceExecutor.initialize();
   }
