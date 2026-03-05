@@ -79,6 +79,7 @@ jobs:
         run: |
           mkdir -p deploy
           cp web/index.html deploy/
+          cp web/coi-serviceworker.js deploy/
           cp web/LICENSE deploy/
           cp -r web/css deploy/
           cp -r web/js deploy/
